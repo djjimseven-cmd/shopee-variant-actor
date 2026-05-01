@@ -44,27 +44,32 @@
           "sku": {
             "title": "SKU",
             "type": "string",
-            "editor": "textfield"
+            "editor": "textfield",
+            "description": "Internal SKU or parent SKU used to group crawled variants."
           },
           "product_link": {
             "title": "Product Link",
             "type": "string",
-            "editor": "textfield"
+            "editor": "textfield",
+            "description": "Shopee product detail URL to crawl."
           },
           "product_id": {
             "title": "Product ID",
             "type": "string",
-            "editor": "textfield"
+            "editor": "textfield",
+            "description": "Optional Shopee item/product ID."
           },
           "product_name": {
             "title": "Product Name",
             "type": "string",
-            "editor": "textfield"
+            "editor": "textfield",
+            "description": "Optional product name used as fallback metadata."
           },
           "brand": {
             "title": "Brand",
             "type": "string",
-            "editor": "textfield"
+            "editor": "textfield",
+            "description": "Optional brand name."
           }
         },
         "required": [
