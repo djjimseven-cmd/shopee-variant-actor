@@ -6,26 +6,31 @@
     "run_source": {
       "title": "Run Source",
       "type": "string",
+      "editor": "textfield",
       "description": "Optional identifier for the seed source."
     },
     "snapshot_date": {
       "title": "Snapshot Date",
       "type": "string",
+      "editor": "textfield",
       "description": "Date string used for output rows, for example 2026-04-29."
     },
     "webhook_url": {
       "title": "Base44 Webhook URL",
       "type": "string",
+      "editor": "textfield",
       "description": "Optional webhook URL. If provided, actor will POST { items: [...] } after crawl."
     },
     "webhook_headers": {
       "title": "Webhook Headers",
       "type": "object",
+      "editor": "json",
       "description": "Optional headers for webhook POST, for example auth tokens."
     },
     "max_requests_per_crawl": {
       "title": "Max Requests Per Crawl",
       "type": "integer",
+      "editor": "number",
       "description": "Optional cap for safety.",
       "default": 100
     },
@@ -38,23 +43,28 @@
         "properties": {
           "sku": {
             "title": "SKU",
-            "type": "string"
+            "type": "string",
+            "editor": "textfield"
           },
           "product_link": {
             "title": "Product Link",
-            "type": "string"
+            "type": "string",
+            "editor": "textfield"
           },
           "product_id": {
             "title": "Product ID",
-            "type": "string"
+            "type": "string",
+            "editor": "textfield"
           },
           "product_name": {
             "title": "Product Name",
-            "type": "string"
+            "type": "string",
+            "editor": "textfield"
           },
           "brand": {
             "title": "Brand",
-            "type": "string"
+            "type": "string",
+            "editor": "textfield"
           }
         },
         "required": [
