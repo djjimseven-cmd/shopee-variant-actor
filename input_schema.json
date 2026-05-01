@@ -37,7 +37,8 @@
     "items": {
       "title": "Seed Items",
       "type": "array",
-      "editor": "table",
+      "editor": "schemaBased",
+      "description": "List of Shopee product links to crawl.",
       "items": {
         "type": "object",
         "properties": {
