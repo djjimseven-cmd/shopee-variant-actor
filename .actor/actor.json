@@ -1,0 +1,13 @@
+{
+  "actorSpecification": 1,
+  "name": "shopee-variant-actor",
+  "title": "Shopee Variant Actor",
+  "description": "Crawls Shopee product detail pages, extracts variant-level data, and optionally POSTs to Base44 webhook.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "meta": {
+    "templateId": "project_empty"
+  },
+  "input": "./input_schema.json",
+  "dockerfile": "../Dockerfile"
+}

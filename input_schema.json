@@ -1,0 +1,70 @@
+{
+  "title": "Shopee Variant Crawl Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "run_source": {
+      "title": "Run Source",
+      "type": "string",
+      "description": "Optional identifier for the seed source."
+    },
+    "snapshot_date": {
+      "title": "Snapshot Date",
+      "type": "string",
+      "description": "Date string used for output rows, for example 2026-04-29."
+    },
+    "webhook_url": {
+      "title": "Base44 Webhook URL",
+      "type": "string",
+      "description": "Optional webhook URL. If provided, actor will POST { items: [...] } after crawl."
+    },
+    "webhook_headers": {
+      "title": "Webhook Headers",
+      "type": "object",
+      "description": "Optional headers for webhook POST, for example auth tokens."
+    },
+    "max_requests_per_crawl": {
+      "title": "Max Requests Per Crawl",
+      "type": "integer",
+      "description": "Optional cap for safety.",
+      "default": 100
+    },
+    "items": {
+      "title": "Seed Items",
+      "type": "array",
+      "editor": "table",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "title": "SKU",
+            "type": "string"
+          },
+          "product_link": {
+            "title": "Product Link",
+            "type": "string"
+          },
+          "product_id": {
+            "title": "Product ID",
+            "type": "string"
+          },
+          "product_name": {
+            "title": "Product Name",
+            "type": "string"
+          },
+          "brand": {
+            "title": "Brand",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku",
+          "product_link"
+        ]
+      }
+    }
+  },
+  "required": [
+    "items"
+  ]
+}

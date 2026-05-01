@@ -1,0 +1,15 @@
+{
+  "name": "shopee-variant-actor",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Apify Playwright actor to crawl Shopee product variant data and optionally post to Base44 webhook.",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "apify": "^3.2.6",
+    "crawlee": "^3.11.5",
+    "playwright": "^1.53.0"
+  }
+}
