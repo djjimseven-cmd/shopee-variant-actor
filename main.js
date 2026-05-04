@@ -878,9 +878,11 @@ const crawler = new PlaywrightCrawler({
     });
 
     if (rows.length > 0 && rows.length < MIN_VARIANT_WARNING_COUNT) {
+      const pageDiagnosis = await diagnosePage(page);
       log.warning(
         `Only ${rows.length} variant row extracted for ${seed.sku}. Check dataset raw_json.extraction; Shopee may have blocked API/script variant data or the product has no variants.`
       );
+      log.warning(`Low variant count diagnosis for ${seed.sku}: ${JSON.stringify(pageDiagnosis)}`);
     }
 
     if (!rows.length) {
