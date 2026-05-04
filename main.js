@@ -312,7 +312,7 @@ async function extractApiVariants(page, seed) {
     ids.shopId = ids.shopId || pageIds.shopId;
     ids.productId = ids.productId || pageIds.productId;
   }
-  if (!ids.shopId || !ids.productId) return [];
+  if (!ids.shopId || !ids.productId) return { variants: [], attempts: [{ error: 'missing_shop_or_item_id' }] };
 
   return page.evaluate(async ({ shopId, itemId }) => {
     const normalize = (value = '') =>
@@ -335,10 +335,23 @@ async function extractApiVariants(page, seed) {
             'x-requested-with': 'XMLHttpRequest',
           },
         });
-        if (!response.ok) return null;
-        return response.json();
-      } catch {
-        return null;
+        const text = await response.text();
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          // keep diagnostic text only
+        }
+        return {
+          ok: response.ok,
+          status: response.status,
+          finalUrl: response.url,
+          contentType: response.headers.get('content-type') || '',
+          bodySnippet: text.slice(0, 180),
+          json,
+        };
+      } catch (error) {
+        return { ok: false, status: 0, error: error.message || 'fetch_failed' };
       }
     }
 
@@ -392,9 +405,21 @@ async function extractApiVariants(page, seed) {
       return null;
     }
 
+    const attempts = [];
+
     for (const apiUrl of apiUrls) {
-      const payload = await fetchJson(apiUrl);
-      const item = findItemData(payload);
+      const fetched = await fetchJson(apiUrl);
+      const item = findItemData(fetched?.json);
+      attempts.push({
+        apiUrl,
+        ok: fetched?.ok || false,
+        status: fetched?.status || 0,
+        finalUrl: fetched?.finalUrl || '',
+        contentType: fetched?.contentType || '',
+        hasItemData: Boolean(item),
+        error: fetched?.error || '',
+        bodySnippet: fetched?.bodySnippet || '',
+      });
       if (!item) continue;
 
       const tiers = Array.isArray(item.tier_variations) ? item.tier_variations : [];
@@ -407,7 +432,7 @@ async function extractApiVariants(page, seed) {
         item.image_url ||
         '';
 
-      return models.map((model) => {
+      const variants = models.map((model) => {
         const tierIndexes = Array.isArray(model.extinfo?.tier_index)
           ? model.extinfo.tier_index
           : Array.isArray(model.tier_index)
@@ -438,9 +463,11 @@ async function extractApiVariants(page, seed) {
           },
         };
       });
+
+      return { variants, attempts };
     }
 
-    return [];
+    return { variants: [], attempts };
   }, { shopId: ids.shopId, itemId: ids.productId });
 }
 
@@ -777,7 +804,8 @@ async function extractRows(page, seed) {
   await closeCommonPopups(page);
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   const parentMeta = await extractParentMeta(page, seed);
-  const apiVariants = await extractApiVariants(page, seed);
+  const apiResult = await extractApiVariants(page, seed);
+  const apiVariants = Array.isArray(apiResult) ? apiResult : apiResult.variants || [];
 
   if (apiVariants.length) {
     log.info(`Extracted ${apiVariants.length} variants from Shopee API for ${seed.sku}.`);
@@ -792,6 +820,7 @@ async function extractRows(page, seed) {
       })
     );
   }
+  log.warning(`Shopee API extraction failed for ${seed.sku}: ${JSON.stringify(apiResult.attempts || [])}`);
 
   const structured = await extractStructuredVariants(page);
 
@@ -808,6 +837,7 @@ async function extractRows(page, seed) {
       })
     );
   }
+  log.warning(`Structured script extraction found 0 variants for ${seed.sku}.`);
 
   const domRows = await extractVariantsFromDom(page, seed, parentMeta);
   log.info(`Extracted ${domRows.length} variants from DOM fallback for ${seed.sku}.`);
