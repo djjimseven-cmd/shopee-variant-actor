@@ -34,6 +34,15 @@
       "description": "Optional cap for safety.",
       "default": 100
     },
+    "proxyConfiguration": {
+      "title": "Proxy Configuration",
+      "type": "object",
+      "editor": "proxy",
+      "description": "Recommended for Shopee. Use Apify Proxy or residential proxy if Shopee returns empty pages.",
+      "default": {
+        "useApifyProxy": true
+      }
+    },
     "items": {
       "title": "Seed Items",
       "type": "array",

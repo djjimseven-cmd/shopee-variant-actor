@@ -620,6 +620,22 @@ async function readCurrentVariantState(page) {
   });
 }
 
+async function diagnosePage(page) {
+  return page.evaluate(() => {
+    const bodyText = String(document.body?.innerText || document.body?.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return {
+      title: document.title || '',
+      url: location.href,
+      hasPriceSignal: /₫|\d[\d.,]+\s*đ/i.test(bodyText),
+      hasVariantSignal: /phân loại|phan loai|variation|variant/i.test(bodyText),
+      hasLoginSignal: /log in|login|đăng nhập|dang nhap|back to home page|skip to main content/i.test(bodyText),
+      bodySnippet: bodyText.slice(0, 240),
+    };
+  });
+}
+
 function buildNormalizedFields(productTitle, variantName) {
   const text = `${productTitle} ${variantName}`;
   return {
@@ -795,6 +811,10 @@ async function extractRows(page, seed) {
 
   const domRows = await extractVariantsFromDom(page, seed, parentMeta);
   log.info(`Extracted ${domRows.length} variants from DOM fallback for ${seed.sku}.`);
+  if (!domRows.length) {
+    const pageDiagnosis = await diagnosePage(page);
+    log.warning(`No variants extracted for ${seed.sku}. Page diagnosis: ${JSON.stringify(pageDiagnosis)}`);
+  }
   return domRows;
 }
 
@@ -827,12 +847,27 @@ if (!items.length) {
 
 const results = [];
 const seen = new Set();
+const proxyConfiguration = await Actor.createProxyConfiguration(input.proxyConfiguration);
 
 const crawler = new PlaywrightCrawler({
   maxRequestsPerCrawl: input.max_requests_per_crawl || 100,
   headless: true,
   requestHandlerTimeoutSecs: 120,
-  maxConcurrency: 3,
+  maxConcurrency: input.proxyConfiguration ? 1 : 3,
+  proxyConfiguration,
+  preNavigationHooks: [
+    async ({ page }, gotoOptions) => {
+      await page.setExtraHTTPHeaders({
+        accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'accept-language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+        'sec-ch-ua': '"Chromium";v="120", "Google Chrome";v="120", "Not=A?Brand";v="99"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Linux"',
+      });
+      gotoOptions.waitUntil = 'domcontentloaded';
+    },
+  ],
   async requestHandler({ request, page }) {
     const seed = request.userData.seed;
     log.info(`Processing ${seed.sku} -> ${seed.product_link}`);
