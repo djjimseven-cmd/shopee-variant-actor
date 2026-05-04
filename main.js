@@ -2,6 +2,7 @@ import { Actor } from 'apify';
 import { PlaywrightCrawler, log, sleep } from 'crawlee';
 
 const DEFAULT_SOURCE_TYPE = 'apify_shopee_variant_crawl';
+const MIN_VARIANT_WARNING_COUNT = 2;
 
 function stripDiacritics(value = '') {
   return value
@@ -26,6 +27,20 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toCount(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value) : null;
+  const raw = slugifyVietnamese(value).replace(/\s+/g, '');
+  const match = raw.match(/(\d+(?:[.,]\d+)?)(k|nghin|tr|trieu|m)?/i);
+  if (!match) return toNumber(value);
+  const parsed = Number(match[1].replace(',', '.'));
+  if (!Number.isFinite(parsed)) return null;
+  const unit = match[2] || '';
+  if (unit === 'k' || unit === 'nghin') return Math.round(parsed * 1000);
+  if (unit === 'tr' || unit === 'trieu' || unit === 'm') return Math.round(parsed * 1000000);
+  return Math.round(parsed);
+}
+
 function cleanPrice(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') {
@@ -37,7 +52,11 @@ function cleanPrice(value) {
 }
 
 function parseShopeeIds(url = '') {
-  const match = String(url).match(/product\/(\d+)\/(\d+)/i);
+  const text = String(url || '');
+  const match =
+    text.match(/product\/(\d+)\/(\d+)/i) ||
+    text.match(/(?:^|[.-])i\.(\d+)\.(\d+)(?:[/?#]|$)/i) ||
+    text.match(/[?&]shopid=(\d+).*?[?&]itemid=(\d+)/i);
   return {
     shopId: match?.[1] || '',
     productId: match?.[2] || '',
@@ -77,14 +96,21 @@ function normalizePackCount(text = '') {
 function normalizeFlavor(text = '') {
   const normalized = slugifyVietnamese(text);
   const flavorMap = [
+    ['ca hoi', /\bca\s*hoi\b/],
     ['ca ngu', /\bca ngu\b/],
+    ['hai san', /\bhai san\b/],
+    ['ga nuong', /\bga\s*nuong\b/],
+    ['ga', /\b(thit\s*)?ga\b/],
+    ['bo', /\b(thit\s*)?bo\b/],
+    ['cuu', /\b(thit\s*)?cuu\b/],
+    ['vit', /\b(thit\s*)?vit\b/],
+    ['heo', /\b(thit\s*)?(heo|lon)\b/],
+    ['gan ga', /\bgan\s*ga\b/],
     ['ca', /\bca\b/],
-    ['ga', /\bga\b/],
-    ['bo', /\bbo\b/],
     ['sua', /\bsua\b/],
-    ['cuu', /\bcuu\b/],
     ['gan', /\bgan\b/],
     ['tom', /\btom\b/],
+    ['rau cu', /\brau\s*cu\b/],
   ];
   for (const [label, pattern] of flavorMap) {
     if (pattern.test(normalized)) return label;
@@ -160,7 +186,8 @@ async function extractParentMeta(page, seed) {
       safeAttr(['img'], 'src');
 
     const productTitle =
-      safeText(['meta[property="og:title"]', 'h1', '[data-testid="pdp-product-name"]']) ||
+      safeAttr(['meta[property="og:title"]'], 'content') ||
+      safeText(['h1', '[data-testid="pdp-product-name"]']) ||
       seedRow.product_name ||
       '';
 
@@ -278,6 +305,145 @@ async function extractStructuredVariants(page) {
   });
 }
 
+async function extractApiVariants(page, seed) {
+  const ids = parseShopeeIds(seed.product_link);
+  if (!ids.shopId || !ids.productId) {
+    const pageIds = parseShopeeIds(page.url());
+    ids.shopId = ids.shopId || pageIds.shopId;
+    ids.productId = ids.productId || pageIds.productId;
+  }
+  if (!ids.shopId || !ids.productId) return [];
+
+  return page.evaluate(async ({ shopId, itemId }) => {
+    const normalize = (value = '') =>
+      String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const apiUrls = [
+      `/api/v4/pdp/get_pc?shop_id=${encodeURIComponent(shopId)}&item_id=${encodeURIComponent(itemId)}&tz_offset_minutes=420&detail_level=0`,
+      `/api/v4/item/get?shopid=${encodeURIComponent(shopId)}&itemid=${encodeURIComponent(itemId)}`,
+    ];
+
+    async function fetchJson(path) {
+      try {
+        const response = await fetch(path, {
+          credentials: 'include',
+          headers: {
+            accept: 'application/json',
+            'x-api-source': 'pc',
+            'x-requested-with': 'XMLHttpRequest',
+          },
+        });
+        if (!response.ok) return null;
+        return response.json();
+      } catch {
+        return null;
+      }
+    }
+
+    function findItemData(value, seen = new Set()) {
+      if (!value || typeof value !== 'object' || seen.has(value)) return null;
+      seen.add(value);
+      if (Array.isArray(value.tier_variations) && Array.isArray(value.models)) return value;
+      if (value.item && typeof value.item === 'object') {
+        const found = findItemData(value.item, seen);
+        if (found) return found;
+      }
+      if (value.data && typeof value.data === 'object') {
+        const found = findItemData(value.data, seen);
+        if (found) return found;
+      }
+      for (const child of Object.values(value)) {
+        const found = findItemData(child, seen);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    function optionName(option) {
+      if (typeof option === 'string') return option;
+      return normalize(option?.name || option?.option || option?.value || '');
+    }
+
+    function priceFromModel(model) {
+      return (
+        model.price ||
+        model.price_before_discount ||
+        model.price_stocks?.[0]?.current_price ||
+        model.price_stocks?.[0]?.price ||
+        model.price_stocks?.[0]?.promotion_price ||
+        null
+      );
+    }
+
+    function stockFromModel(model) {
+      if (typeof model.stock === 'number') return model.stock;
+      if (typeof model.normal_stock === 'number') return model.normal_stock;
+      if (typeof model.price_stocks?.[0]?.stock === 'number') return model.price_stocks[0].stock;
+      return null;
+    }
+
+    function soldFromModel(model, item) {
+      if (typeof model.sold === 'number') return model.sold;
+      if (typeof model.historical_sold === 'number') return model.historical_sold;
+      if (typeof item.sold === 'number') return item.sold;
+      if (typeof item.historical_sold === 'number') return item.historical_sold;
+      return null;
+    }
+
+    for (const apiUrl of apiUrls) {
+      const payload = await fetchJson(apiUrl);
+      const item = findItemData(payload);
+      if (!item) continue;
+
+      const tiers = Array.isArray(item.tier_variations) ? item.tier_variations : [];
+      const models = Array.isArray(item.models) ? item.models : [];
+      const title = normalize(item.title || item.name || item.item?.title || '');
+      const shop = item.shop_detailed || item.shop || {};
+      const image =
+        item.image ||
+        item.images?.[0] ||
+        item.image_url ||
+        '';
+
+      return models.map((model) => {
+        const tierIndexes = Array.isArray(model.extinfo?.tier_index)
+          ? model.extinfo.tier_index
+          : Array.isArray(model.tier_index)
+            ? model.tier_index
+            : [];
+        const groups = tierIndexes.map((tierOptionIndex, tierIndex) => {
+          const tier = tiers[tierIndex] || {};
+          return {
+            groupName: normalize(tier.name || `group_${tierIndex + 1}`),
+            optionValue: optionName(tier.options?.[tierOptionIndex]),
+          };
+        });
+
+        return {
+          modelId: model.modelid || model.model_id || '',
+          name: normalize(model.name),
+          price: priceFromModel(model),
+          originalPrice: model.price_before_discount || null,
+          stock: stockFromModel(model),
+          sold: soldFromModel(model, item),
+          groups,
+          parentMeta: {
+            parent_product_name: title,
+            competitor_shop_name: normalize(shop.name || shop.shop_name || ''),
+            competitor_shop_link: shop.shopid ? `/shop/${shop.shopid}` : '',
+            image_url: image,
+            currency: 'VND',
+          },
+        };
+      });
+    }
+
+    return [];
+  }, { shopId: ids.shopId, itemId: ids.productId });
+}
+
 async function extractDomVariantGroups(page) {
   return page.evaluate(() => {
     const normalize = (value = '') =>
@@ -332,6 +498,14 @@ async function extractDomVariantGroups(page) {
       document.querySelector('[class*="pdp"]') ||
       document.querySelector('main') ||
       document.body;
+
+    const bodyText = normalize(document.body.innerText || document.body.textContent || '').toLowerCase();
+    const looksLikeAuthGate =
+      /log in|login|back to home page|skip to main content|dang nhap|đăng nhập/i.test(bodyText) &&
+      !/₫|\d[\d.,]+\s*đ|them vao gio hang|thêm vào giỏ hàng|mua ngay/i.test(bodyText);
+    const looksLikeProduct =
+      /₫|\d[\d.,]+\s*đ|them vao gio hang|thêm vào giỏ hàng|mua ngay|phan loai|phân loại/i.test(bodyText);
+    if (looksLikeAuthGate || !looksLikeProduct) return [];
 
     const sections = Array.from(productRoot.querySelectorAll('div')).filter((node) => {
       if (!isVisible(node)) return false;
@@ -433,9 +607,9 @@ async function readCurrentVariantState(page) {
     };
 
     const allText = document.body.innerText || '';
-    const soldMatch = allText.match(/(\d[\d.,]*)\s*(da ban|đã bán|sold)/i);
-    const stockMatch = allText.match(/kho[:\s]+(\d[\d.,]*)/i);
-    const originalMatch = allText.match(/Gia goc[:\s]*([₫\d.,]+)/i);
+    const soldMatch = allText.match(/(\d[\d.,]*(?:\s*(?:k|K|nghìn|tr|triệu|m))?)\s*(da ban|đã bán|sold)/i);
+    const stockMatch = allText.match(/(?:kho|stock|con lai|còn lại)[:\s]+(\d[\d.,]*)/i);
+    const originalMatch = allText.match(/(?:Gia goc|Giá gốc|original price)[:\s]*([₫\d.,]+)/i);
 
     return {
       priceText: findPriceText(),
@@ -469,15 +643,19 @@ function buildRow(seed, parentMeta, item) {
       ])
   );
 
-  const normalized = buildNormalizedFields(parentMeta.parent_product_name, variantName);
+  const mergedParentMeta = {
+    ...parentMeta,
+    ...(item.parentMeta || {}),
+  };
+  const normalized = buildNormalizedFields(mergedParentMeta.parent_product_name, variantName);
 
   return {
     sku: seed.sku,
     seed_product_link: seed.product_link,
     parent_product_id: seed.product_id || ids.productId || '',
-    parent_product_name: parentMeta.parent_product_name || seed.product_name || '',
-    competitor_shop_name: parentMeta.competitor_shop_name || '',
-    competitor_shop_link: parentMeta.competitor_shop_link || '',
+    parent_product_name: mergedParentMeta.parent_product_name || seed.product_name || '',
+    competitor_shop_name: mergedParentMeta.competitor_shop_name || '',
+    competitor_shop_link: mergedParentMeta.competitor_shop_link || '',
     competitor_product_link: item.competitor_product_link || seed.product_link,
     competitor_product_id: item.competitor_product_id || ids.productId || '',
     variant_id: item.variant_id || item.modelId || '',
@@ -495,14 +673,14 @@ function buildRow(seed, parentMeta, item) {
     variant_original_price: cleanPrice(item.variant_original_price ?? item.originalPrice),
     variant_stock:
       item.variant_stock === undefined || item.variant_stock === null
-        ? item.stock ?? null
-        : item.variant_stock,
+        ? toCount(item.stock) ?? null
+        : toCount(item.variant_stock),
     variant_sold_est:
       item.variant_sold_est === undefined || item.variant_sold_est === null
-        ? item.sold ?? null
-        : item.variant_sold_est,
-    currency: item.currency || parentMeta.currency || 'VND',
-    image_url: item.image_url || parentMeta.image_url || '',
+        ? toCount(item.sold) ?? null
+        : toCount(item.variant_sold_est),
+    currency: item.currency || mergedParentMeta.currency || 'VND',
+    image_url: item.image_url || mergedParentMeta.image_url || '',
     source_type: DEFAULT_SOURCE_TYPE,
     snapshot_date: item.snapshot_date || seed.snapshot_date || new Date().toISOString().slice(0, 10),
     raw_json: item.raw_json || item.raw || {},
@@ -513,6 +691,12 @@ async function extractVariantsFromDom(page, seed, parentMeta) {
   const groups = await extractDomVariantGroups(page);
   if (!groups.length) {
     const current = await readCurrentVariantState(page);
+    const hasProductSignal = current.priceText || current.stockText || current.soldText;
+    const parentName = slugifyVietnamese(parentMeta.parent_product_name || '');
+    const looksLikeShopeeShell =
+      /log in|login|back to home page|skip to main content|hot deals|shopee viet nam/.test(parentName);
+    if (!hasProductSignal && looksLikeShopeeShell) return [];
+
     return [
       buildRow(seed, parentMeta, {
         variant_name: parentMeta.parent_product_name,
@@ -577,9 +761,26 @@ async function extractRows(page, seed) {
   await closeCommonPopups(page);
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   const parentMeta = await extractParentMeta(page, seed);
+  const apiVariants = await extractApiVariants(page, seed);
+
+  if (apiVariants.length) {
+    log.info(`Extracted ${apiVariants.length} variants from Shopee API for ${seed.sku}.`);
+    return apiVariants.map((item) =>
+      buildRow(seed, parentMeta, {
+        ...item,
+        competitor_product_link: seed.product_link,
+        raw_json: {
+          extraction: 'shopee_pdp_api',
+          api_item: item,
+        },
+      })
+    );
+  }
+
   const structured = await extractStructuredVariants(page);
 
   if (structured.length) {
+    log.info(`Extracted ${structured.length} variants from structured scripts for ${seed.sku}.`);
     return structured.map((item) =>
       buildRow(seed, parentMeta, {
         ...item,
@@ -592,7 +793,9 @@ async function extractRows(page, seed) {
     );
   }
 
-  return extractVariantsFromDom(page, seed, parentMeta);
+  const domRows = await extractVariantsFromDom(page, seed, parentMeta);
+  log.info(`Extracted ${domRows.length} variants from DOM fallback for ${seed.sku}.`);
+  return domRows;
 }
 
 async function postWebhook(webhookUrl, headers, items) {
@@ -638,6 +841,12 @@ const crawler = new PlaywrightCrawler({
       ...seed,
       snapshot_date: input.snapshot_date || new Date().toISOString().slice(0, 10),
     });
+
+    if (rows.length > 0 && rows.length < MIN_VARIANT_WARNING_COUNT) {
+      log.warning(
+        `Only ${rows.length} variant row extracted for ${seed.sku}. Check dataset raw_json.extraction; Shopee may have blocked API/script variant data or the product has no variants.`
+      );
+    }
 
     if (!rows.length) {
       const fallback = {
