@@ -43,6 +43,12 @@
         "useApifyProxy": true
       }
     },
+    "shopee_cookies": {
+      "title": "Shopee Cookies",
+      "type": "string",
+      "editor": "textarea",
+      "description": "Optional logged-in Shopee cookie header value. Prefer setting the SHOPEE_COOKIES secret instead of pasting here."
+    },
     "items": {
       "title": "Seed Items",
       "type": "array",

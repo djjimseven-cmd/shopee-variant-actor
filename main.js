@@ -63,6 +63,35 @@ function parseShopeeIds(url = '') {
   };
 }
 
+function parseCookieHeader(cookieHeader = '') {
+  return String(cookieHeader || '')
+    .split(';')
+    .map((part) => {
+      const trimmed = part.trim();
+      const separatorIndex = trimmed.indexOf('=');
+      if (separatorIndex <= 0) return null;
+      const name = trimmed.slice(0, separatorIndex).trim();
+      const value = trimmed.slice(separatorIndex + 1).trim();
+      if (!name || !value) return null;
+      return {
+        name,
+        value,
+        domain: '.shopee.vn',
+        path: '/',
+        secure: true,
+        sameSite: 'Lax',
+      };
+    })
+    .filter(Boolean);
+}
+
+async function applyShopeeCookies(page, cookieHeader) {
+  const cookies = parseCookieHeader(cookieHeader);
+  if (!cookies.length) return 0;
+  await page.context().addCookies(cookies);
+  return cookies.length;
+}
+
 function normalizeWeight(text = '') {
   const normalized = slugifyVietnamese(text);
   const match = normalized.match(/(\d+(?:[.,]\d+)?)\s*(kg|g)\b/);
@@ -878,6 +907,11 @@ if (!items.length) {
 const results = [];
 const seen = new Set();
 const proxyConfiguration = await Actor.createProxyConfiguration(input.proxyConfiguration);
+const shopeeCookies = input.shopee_cookies || process.env.SHOPEE_COOKIES || '';
+const shopeeCookieCount = parseCookieHeader(shopeeCookies).length;
+if (shopeeCookieCount) {
+  log.info(`Shopee cookie session configured with ${shopeeCookieCount} cookies.`);
+}
 
 const crawler = new PlaywrightCrawler({
   maxRequestsPerCrawl: input.max_requests_per_crawl || 100,
@@ -887,10 +921,17 @@ const crawler = new PlaywrightCrawler({
   proxyConfiguration,
   preNavigationHooks: [
     async ({ page }, gotoOptions) => {
+      if (shopeeCookies) {
+        const addedCookies = await applyShopeeCookies(page, shopeeCookies);
+        if (addedCookies) {
+          log.debug(`Applied ${addedCookies} Shopee cookies before navigation.`);
+        }
+      }
       await page.setExtraHTTPHeaders({
         accept:
           'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'accept-language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+        ...(shopeeCookies ? { cookie: shopeeCookies } : {}),
         'sec-ch-ua': '"Chromium";v="120", "Google Chrome";v="120", "Not=A?Brand";v="99"',
         'sec-ch-ua-mobile': '?0',
         'sec-ch-ua-platform': '"Linux"',
